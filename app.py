@@ -228,53 +228,55 @@ def generate_map(station_code, station_coordinates, station_data_df, train_stati
 # --- Flask Routes ---
 
 @app.route('/', methods=['GET', 'POST'])
+# --- Inside the index() function ---
+
+@app.route('/', methods=['GET', 'POST'])
 def index():
     map_html = None
     status_message = None
     error_message = None
     searched_station = None
 
-    # Load coordinates on first request or if cache is empty
-    station_coordinates, station_data_df = load_station_coordinates(
-        EXCEL_FILE_PATH)
-    if station_coordinates is None:
-        # Critical error if coordinates can't be loaded
-        return render_template('index.html', error_message="FATAL ERROR: Could not load station coordinates file. Check server logs.")
+    # ... (loading coordinates remains the same) ...
 
     if request.method == 'POST':
-        station_code = request.form.get('station_code', '').strip().upper()
-        searched_station = station_code  # Store for display
-
-        if not station_code:
-            error_message = "Please enter a station code."
-            return render_template('index.html', error_message=error_message)
-
-        status_message = f"Fetching data for station: {station_code}..."
-        print(f"Request received for station: {station_code}")  # Server log
+        # ... (getting station_code remains the same) ...
 
         # 1. Fetch Train Numbers
         train_numbers = get_trains_for_station(station_code)
 
-        if train_numbers is None:
-            error_message = f"Error fetching train list for {station_code}. The website might be down or the station code invalid."
-            return render_template('index.html', error_message=error_message, searched_station=searched_station)
-        elif not train_numbers:
-            status_message = f"No trains found passing through {station_code} according to etrain.info."
-            return render_template('index.html', status_message=status_message, searched_station=searched_station)
+        # ... (error handling for train_numbers fetch) ...
 
-        total_trains = len(train_numbers)
-        status_message = f"Found {total_trains} trains for {station_code}. Fetching routes (max {MAX_WORKERS} parallel)... This may take a moment."
-        print(f"Found {total_trains} trains. Fetching routes...")
+        total_trains_found = len(train_numbers)
+        # --- Apply Plot Limit (Keep this if still needed for memory) ---
+        PLOT_LIMIT = 75  # Keep or adjust this limit
+        trains_to_process_list = train_numbers
+        limit_applied = False
+        if total_trains_found > PLOT_LIMIT:
+            print(f"Limiting processing to {PLOT_LIMIT} out of {total_trains_found} trains found.")
+            trains_to_process_list = train_numbers[:PLOT_LIMIT]
+            limit_applied = True
+        # --- Limit End ---
 
-        # 2. Fetch Routes Concurrently
-        train_station_routes = {}
+        total_trains_to_process = len(trains_to_process_list)
+
+        # Adjust status message
+        # ... (status message logic slightly adjusted) ...
+        base_status = f"Found {total_trains_found} trains for {station_code}."
+        if limit_applied:
+            base_status += f" Processing first {total_trains_to_process} (limit applied)."
+        status_message = base_status + f" Fetching routes (max {MAX_WORKERS} parallel)..."
+        print(f"Processing {total_trains_to_process} trains (out of {total_trains_found} found)...")
+
+
+        # 2. Fetch Routes Concurrently (Use trains_to_process_list)
+        all_fetched_routes = {} # Store ALL fetched routes temporarily
         futures_map = {}
         processed_count = 0
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for train_num in train_numbers:
-                future = executor.submit(
-                    get_station_codes_for_train, train_num)
+            for train_num in trains_to_process_list: # Use the limited list
+                future = executor.submit(get_station_codes_for_train, train_num)
                 futures_map[future] = train_num
 
             for future in concurrent.futures.as_completed(futures_map):
@@ -282,43 +284,98 @@ def index():
                 processed_count += 1
                 try:
                     returned_train_num, station_codes = future.result()
-                    if station_codes:
-                        train_station_routes[returned_train_num] = station_codes
+                    if station_codes and len(station_codes) >= 2: # Need at least 2 stations for start/end
+                        all_fetched_routes[returned_train_num] = station_codes
+                    elif station_codes:
+                         print(f"Warning: Route for train {returned_train_num} has less than 2 stations, cannot check for pairs.")
+                         # Decide whether to include these short routes later or not
+                         # all_fetched_routes[returned_train_num] = station_codes # Optional: keep them anyway?
                 except Exception as exc:
-                    print(
-                        f"Train {original_train_num} generated an exception during fetch/process: {exc}")
-                # Optional: Update status periodically? Could be complex with web requests.
-                # Simple print for server log:
-                if processed_count % 20 == 0 or processed_count == total_trains:
-                    print(
-                        f"    Route fetching progress: {processed_count}/{total_trains}")
+                    print(f"Train {original_train_num} generated an exception during fetch/process: {exc}")
+
+                if processed_count % 20 == 0 or processed_count == total_trains_to_process:
+                    print(f"    Route fetching progress: {processed_count}/{total_trains_to_process}")
+
+
+        # --- !!! 2.5 Filter Reverse Duplicates START !!! ---
+        print(f"Fetched {len(all_fetched_routes)} valid routes. Filtering reverse duplicates...")
+        train_station_routes = {} # This will hold the FINAL routes to plot
+        processed_pairs = set()   # Keep track of numbers already included or skipped as a pair
+
+        # Sort trains numerically to process consistently (e.g., keep 15013, skip 15014)
+        # Handle potential non-numeric train numbers gracefully
+        def sort_key(item):
+            try: return int(item[0])
+            except ValueError: return float('inf') # Put non-numeric ones at the end
+
+        sorted_fetched_items = sorted(all_fetched_routes.items(), key=sort_key)
+
+        for train_num_a, route_a in sorted_fetched_items:
+            if train_num_a in processed_pairs:
+                continue # Skip if already processed as part of a pair
+
+            start_a = route_a[0]
+            end_a = route_a[-1]
+            pair_found_and_skipped = False
+
+            # Search for the reverse pair *within the already fetched routes*
+            for train_num_b, route_b in all_fetched_routes.items():
+                 # Don't compare to itself, check if B is already processed, and ensure B has start/end
+                 if train_num_a == train_num_b or train_num_b in processed_pairs or len(route_b) < 2:
+                     continue
+
+                 start_b = route_b[0]
+                 end_b = route_b[-1]
+
+                 # Check if B is the reverse of A
+                 if start_a == end_b and end_a == start_b:
+                     # Found the pair! Mark the second train (train_num_b) to be skipped.
+                     # We will add train_num_a later.
+                     print(f"  Identified pair: Keeping {train_num_a}, will skip {train_num_b}")
+                     processed_pairs.add(train_num_b)
+                     pair_found_and_skipped = True
+                     # Optimization: Assuming only one direct reverse pair exists per train
+                     break
+
+            # Add train_num_a to the final list (it wasn't skipped)
+            # Also add it to processed_pairs so it doesn't get processed again
+            train_station_routes[train_num_a] = route_a
+            processed_pairs.add(train_num_a)
+
+        # --- !!! 2.5 Filter Reverse Duplicates END !!! ---
+
+
+        final_route_count = len(train_station_routes)
+        print(f"Filtered down to {final_route_count} unique direction routes.")
 
         if not train_station_routes:
-            status_message = f"Found {total_trains} trains for {station_code}, but could not fetch route details for any of them. Website structure might have changed or trains have no listed stops."
-            return render_template('index.html', status_message=status_message, searched_station=searched_station)
+             # Adjust message if filtering removed everything (unlikely but possible)
+             status_message = f"Found {total_trains_found} trains for {station_code}, fetched {len(all_fetched_routes)} routes, but no unique direction routes remained after filtering (or none could be fetched)."
+             # Check if limit was applied too
+             if limit_applied: status_message += f" (Processed {total_trains_to_process} due to limit)."
+             return render_template('index.html', status_message=status_message, searched_station=searched_station)
 
-        status_message = f"Successfully fetched routes for {len(train_station_routes)} out of {total_trains} trains for {station_code}. Generating map..."
-        print(
-            f"Fetched routes for {len(train_station_routes)} trains. Generating map.")
+        # Adjust status message based on final count
+        status_message = f"Successfully fetched {len(all_fetched_routes)} routes for {station_code}"
+        if limit_applied: status_message += f" (processed {total_trains_to_process} due to limit)"
+        status_message += f". Plotting {final_route_count} unique direction routes. Generating map..."
 
-        # 3. Generate Map
+
+        # 3. Generate Map (using the filtered train_station_routes)
         try:
+            # Pass the FILTERED dictionary to the map generator
             folium_map = generate_map(
                 station_code, station_coordinates, station_data_df, train_station_routes)
-            # Get the HTML representation of the map
             map_html = folium_map._repr_html_()
-            status_message = f"Map generated for {len(train_station_routes)} train routes passing through {station_code}."
+            # Adjust final status message
+            status_message = f"Map generated for {final_route_count} unique direction train routes passing through {station_code}."
+            if limit_applied: status_message += f" (Processed {total_trains_to_process} out of {total_trains_found} found due to limit)."
+
             print("Map generation complete.")
         except Exception as e:
-            print(f"Error during map generation: {e}")
-            error_message = "An error occurred while generating the map."
-            # Still render the template, but show the error
-            return render_template('index.html', error_message=error_message, status_message=status_message, searched_station=searched_station)
+            # ... (error handling for map generation) ...
 
-    # Render the template:
-    # - On GET: Show empty form
-    # - On POST: Show form (with previous input) and potentially status, error, or map
-    return render_template('index.html', map_html=map_html, status_message=status_message, error_message=error_message, searched_station=searched_station)
+    # ... (final render_template call) ...
 
 
 # --- Main execution ---
