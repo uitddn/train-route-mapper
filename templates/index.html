@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Train Route Mapper</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        label { display: block; margin-bottom: 5px; }
+        input[type="text"] { padding: 8px; margin-bottom: 10px; width: 200px; }
+        button { padding: 10px 15px; cursor: pointer; }
+        .map-container { margin-top: 20px; width: 90%; height: 600px; border: 1px solid #ccc; }
+        .status { margin-top: 15px; font-style: italic; color: #555; }
+        .error { margin-top: 15px; color: red; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Train Route Mapper</h1>
+    <p>Enter a station code (e.g., NDLS, GAYA, BZA) to see the routes of trains passing through it.</p>
+
+    <form method="POST">
+        <label for="station_code">Station Code:</label>
+        <input type="text" id="station_code" name="station_code" value="{{ request.form.station_code or '' }}" required>
+        <button type="submit">Generate Map</button>
+    </form>
+
+    {% if status_message %}
+        <p class="status">{{ status_message }}</p>
+    {% endif %}
+
+    {% if error_message %}
+        <p class="error">{{ error_message }}</p>
+    {% endif %}
+
+    {% if map_html %}
+        <h2>Map for Station: {{ searched_station }}</h2>
+        <div class="map-container">
+            {{ map_html|safe }} {# Embeds the map HTML, |safe tells Jinja it's safe HTML #}
+        </div>
+    {% endif %}
+
+</body>
+</html>

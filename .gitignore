@@ -1,0 +1,14 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment (if you use one named venv or myenv)
+venv/
+myenv/
+.venv/
+
+# IDE / Editor specific files (examples)
+.vscode/
+.idea/
+*.swp

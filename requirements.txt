@@ -1,0 +1,8 @@
+# requirements.txt
+Flask
+requests
+beautifulsoup4
+folium
+pandas
+openpyxl
+gunicorn  # <--- Add this line
