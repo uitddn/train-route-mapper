@@ -22,7 +22,7 @@ ETRAIN_INFO_BASE_URL_STATION = "https://etrain.info/station/{}/all"
 ETRAIN_INFO_BASE_URL_TRAIN = "https://etrain.info/train/{}/schedule"
 MAX_WORKERS = 25  # Keep lower for free tier memory constraints
 REQUEST_TIMEOUT = 25 # Slightly increased timeout
-PLOT_LIMIT = 75  # **** ADJUST THIS THRESHOLD AS NEEDED **** Max trains to process/plot
+PLOT_LIMIT = 300  # **** ADJUST THIS THRESHOLD AS NEEDED **** Max trains to process/plot
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
