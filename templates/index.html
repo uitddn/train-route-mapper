@@ -38,6 +38,26 @@
         color: red;
         font-weight: bold;
       }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 20px;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+      }
+      th {
+        background-color: #f2f2f2;
+      }
+      .scrollable-table-container {
+        max-height: 360px;
+        overflow-y: auto;
+        border: 1px solid #ccc;
+        background: #fff;
+      }
     </style>
   </head>
   <body>
@@ -47,30 +67,42 @@
       passing through it.
     </p>
 
-    <form method="POST">
-      <label for="station_code">Station Code:</label>
-      <input
-        type="text"
-        id="station_code"
-        name="station_code"
-        value="{{ request.form.station_code or '' }}"
-        required
-      />
-      <button type="submit">Generate Map</button>
-    </form>
-    <!-- Feedback Form -->
-    <form
-      action="{{ url_for('submit_feedback') }}"
-      method="post"
-      style="margin-top: 2em"
+    <div
+      style="
+        display: flex;
+        flex-direction: row;
+        gap: 29em; /* Increased gap */
+        align-items: flex-end;
+        margin-bottom: 1.5em;
+      "
     >
-      <label for="feedback"
-        >Your Feedback(Tell here if you find any problem with website or wrong
-        cordinates for stations.):</label
-      ><br />
-      <input type="text" id="feedback" name="feedback" required />
-      <button type="submit">Submit</button>
-    </form>
+      <form method="POST" style="margin: 0">
+        <label for="station_code">Station Code:</label>
+        <input
+          type="text"
+          id="station_code"
+          name="station_code"
+          value="{{ request.form.station_code or '' }}"
+          required
+        />
+        <button type="submit">Generate Map</button>
+      </form>
+      <form
+        action="{{ url_for('submit_feedback') }}"
+        method="post"
+        style="margin: 0"
+      >
+        <label for="feedback">Your Feedback:</label>
+        <input
+          type="text"
+          id="feedback"
+          name="feedback"
+          required
+          style="width: 220px"
+        />
+        <button type="submit">Submit</button>
+      </form>
+    </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %} {% if
     messages %}
@@ -89,9 +121,49 @@
     <p class="error">{{ error_message }}</p>
     {% endif %} {% if map_html %}
     <h2>Map for Station: {{ searched_station }}</h2>
-    <div class="map-container">
-      {{ map_html|safe }} {# Embeds the map HTML, |safe tells Jinja it's safe
-      HTML #}
+    <div style="display: flex; flex-direction: row; gap: 2em">
+      <div class="map-container" style="flex: 0 0 54%">{{ map_html|safe }}</div>
+      <div style="flex: 1">
+        {% if train_table_data %}
+        <h3>Trains Passing Through</h3>
+        <div class="scrollable-table-container">
+          <table
+            border="1"
+            cellpadding="6"
+            style="border-collapse: collapse; width: 100%"
+          >
+            <thead>
+              <tr>
+                <th>Sr. No.</th>
+                <th>Train Number</th>
+                <th>Train Name</th>
+                <th>Starting Station</th>
+                <th>Terminating Station</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for train in train_table_data %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ train.number }}</td>
+                <td>{{ train.name }}</td>
+                <td>
+                  {{ train.start_code }} {% if train.start_name %}<br /><small
+                    >{{ train.start_name }}</small
+                  >{% endif %}
+                </td>
+                <td>
+                  {{ train.end_code }} {% if train.end_name %}<br /><small
+                    >{{ train.end_name }}</small
+                  >{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+      </div>
     </div>
     {% endif %}
   </body>

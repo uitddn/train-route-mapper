@@ -9,6 +9,7 @@ import sys
 import concurrent.futures
 import os
 from datetime import datetime
+import re
 
 from flask import Flask, render_template, request, flash, redirect, url_for, session
 
@@ -96,29 +97,65 @@ def get_trains_for_station(station_code):
                 print(f"Warning: Could not evaluate data-train attribute: {train_data_str}. Error: {e}")
     return train_numbers
 
+def extract_train_info_from_soup(soup):
+    """Extracts train number, name, starting and terminating stations from soup."""
+    train_info = {}
+
+    # Extract Train Number and Name from <title> or <h1>
+    title_tag = soup.find('title')
+    if title_tag:
+        title_text = title_tag.text
+        # Example: "Train Schedule of SARAIGHAT EXPRESS (12345) with Availability..."
+        num_match = re.search(r'\((\d+)\)', title_text)
+        name_match = re.search(r'Train Schedule of (.*?) \(', title_text)
+        if num_match:
+            train_info['number'] = num_match.group(1)
+        if name_match:
+            train_info['name'] = name_match.group(1).strip()
+    if not train_info.get('name'):
+        h1 = soup.find('h1')
+        if h1:
+            train_info['name'] = h1.get_text(strip=True)
+
+    # Extract Starting and Terminating Station from span.mdtext or similar
+    mdtext_span = soup.find('span', class_='mdtext')
+    if mdtext_span:
+        station_text = mdtext_span.text.strip()
+        # Example: "HOWRAH JN to GUWAHATI"
+        if 'to' in station_text:
+            parts = station_text.split('to')
+            train_info['start_name'] = parts[0].strip()
+            train_info['end_name'] = parts[1].strip()
+
+    return train_info
+
 def get_station_codes_for_train(train_number):
-    """Fetches station codes for a single train (designed for concurrency)."""
+    """Fetches station codes and train info for a single train."""
     try:
         formatted_train_number = f"{int(train_number):05d}"
     except ValueError:
-        return train_number, None
+        return train_number, None, None
 
     url = ETRAIN_INFO_BASE_URL_TRAIN.format(formatted_train_number)
     try:
         response = requests.get(url, timeout=REQUEST_TIMEOUT, headers=HEADERS)
-        if response.status_code == 404: return train_number, None
+        if response.status_code == 404:
+            return train_number, None, None
         response.raise_for_status()
     except requests.exceptions.RequestException as e:
         print(f"Error fetching schedule for train {formatted_train_number}: {e}")
-        return train_number, None
+        return train_number, None, None
     except Exception as e:
         print(f"Unexpected error processing train {formatted_train_number}: {e}")
-        return train_number, None
+        return train_number, None, None
 
     try:
         soup = BeautifulSoup(response.content, 'html.parser')
+        train_info = extract_train_info_from_soup(soup)
+        # Get schedule table
         schedule_table = soup.find('table', class_=lambda x: x and 'schtbl' in x.split())
         station_codes = []
+        station_names = []
         if schedule_table:
             rows = schedule_table.find_all('tr')
             for row in rows:
@@ -128,16 +165,35 @@ def get_station_codes_for_train(train_number):
                     if link:
                         link_text = link.get_text(strip=True)
                         code_part = link_text.split('-')[0].strip()
-                        if code_part: station_codes.append(code_part)
-        elif soup.find('select', {'name': 'src'}): # Fallback only if table fails
+                        name_part = '-'.join(link_text.split('-')[1:]).strip() if '-' in link_text else ''
+                        if code_part:
+                            station_codes.append(code_part)
+                            station_names.append(name_part)
+        elif soup.find('select', {'name': 'src'}):
             source_select = soup.find('select', {'name': 'src'})
             options = source_select.find_all('option')
-            if options: station_codes = [opt['value'] for opt in options if opt.has_attr('value') and opt['value']]
+            if options:
+                station_codes = [opt['value'] for opt in options if opt.has_attr('value') and opt['value']]
+                station_names = [opt.get_text(strip=True) for opt in options if opt.has_attr('value') and opt['value']]
 
-        return train_number, station_codes if station_codes else None
+        # Prepare info for table
+        if station_codes:
+            train_info['start_code'] = station_codes[0]
+            train_info['end_code'] = station_codes[-1]
+            if station_names:
+                train_info['start_name'] = station_names[0]
+                train_info['end_name'] = station_names[-1]
+        else:
+            train_info['start_code'] = train_info['end_code'] = ''
+            if 'start_name' not in train_info:
+                train_info['start_name'] = ''
+            if 'end_name' not in train_info:
+                train_info['end_name'] = ''
+
+        return train_number, station_codes if station_codes else None, train_info
     except Exception as e:
         print(f"Error parsing HTML for train {formatted_train_number}: {e}")
-        return train_number, None
+        return train_number, None, None
 
 def generate_map(station_code, station_coordinates, station_data_df, train_station_routes):
     """Generates the Folium map object using MarkerCluster."""
@@ -202,31 +258,32 @@ def index():
     status_message = None
     error_message = None
     searched_station = None
+    train_table_data = []
 
     station_coordinates, station_data_df = load_station_coordinates(EXCEL_FILE_PATH)
     if station_coordinates is None:
         return render_template('index.html', error_message="FATAL ERROR: Could not load station coordinates file. Check server logs.")
 
-    # --- Remember last searched station in session ---
+    # --- If POST, use submitted station code ---
     if request.method == 'POST':
         station_code = request.form.get('station_code', '').strip().upper()
         searched_station = station_code
         session['last_station_code'] = station_code
+    # --- If GET, but session has last station, use it ---
+    elif session.get('last_station_code'):
+        searched_station = session.get('last_station_code')
 
-        if not station_code:
-            error_message = "Please enter a station code."
-            return render_template('index.html', error_message=error_message)
-
-        print(f"Request received for station: {station_code}")
+    if searched_station:
+        print(f"Request received for station: {searched_station}")
 
         # 1. Fetch Train Numbers
-        train_numbers = get_trains_for_station(station_code)
+        train_numbers = get_trains_for_station(searched_station)
 
         if train_numbers is None:
-            error_message = f"Error fetching train list for {station_code}. Website might be down or unreachable."
+            error_message = f"Error fetching train list for {searched_station}. Website might be down or unreachable."
             return render_template('index.html', error_message=error_message, searched_station=searched_station)
         elif not train_numbers:
-            status_message = f"No trains found passing through {station_code} according to etrain.info."
+            status_message = f"No trains found passing through {searched_station} according to etrain.info."
             return render_template('index.html', status_message=status_message, searched_station=searched_station)
 
         total_trains_found = len(train_numbers)
@@ -238,22 +295,20 @@ def index():
             print(f"Limiting processing to {PLOT_LIMIT} out of {total_trains_found} trains found.")
             trains_to_process_list = train_numbers[:PLOT_LIMIT]
             limit_applied = True
-        # --- Limit End ---
-
         total_trains_to_process = len(trains_to_process_list)
 
         # Build initial status message
-        base_status = f"Found {total_trains_found} trains for {station_code}."
+        base_status = f"Found {total_trains_found} trains for {searched_station}."
         if limit_applied:
             base_status += f" Processing first {total_trains_to_process} (limit {PLOT_LIMIT} applied)."
         else:
-             base_status += f" Processing {total_trains_to_process} trains."
+            base_status += f" Processing {total_trains_to_process} trains."
         status_message = base_status + f" Fetching routes (max {MAX_WORKERS} parallel)..."
         print(f"Processing {total_trains_to_process} trains (out of {total_trains_found} found)...")
 
-
         # 2. Fetch Routes Concurrently
         all_fetched_routes = {}
+        all_train_infos = {}
         futures_map = {}
         processed_count = 0
 
@@ -266,11 +321,11 @@ def index():
                 original_train_num = futures_map[future]
                 processed_count += 1
                 try:
-                    returned_train_num, station_codes = future.result()
+                    returned_train_num, station_codes, train_info = future.result()
                     if station_codes and len(station_codes) >= 2:
                         all_fetched_routes[returned_train_num] = station_codes
-                    # Optional: handle short routes if needed
-                    # elif station_codes: print(f"Info: Route for train {returned_train_num} too short for pair check.")
+                        if train_info:
+                            all_train_infos[returned_train_num] = train_info
                 except Exception as exc:
                     print(f"Train {original_train_num} generated an exception during fetch/process: {exc}")
 
@@ -310,30 +365,42 @@ def index():
             # Add train_a to the final list and mark as processed
             train_station_routes_final[train_num_a] = route_a
             processed_pairs.add(train_num_a)
-        # --- Filtering End ---
+
+        # Prepare table data for template
+        train_table_data = []
+        for train_num, route in train_station_routes_final.items():
+            info = all_train_infos.get(train_num, {})
+            train_table_data.append({
+                'number': info.get('number', train_num),
+                'name': info.get('name', ''),
+                'start_code': info.get('start_code', route[0] if route else ''),
+                'start_name': info.get('start_name', ''),
+                'end_code': info.get('end_code', route[-1] if route else ''),
+                'end_name': info.get('end_name', ''),
+            })
 
         final_route_count = len(train_station_routes_final)
         print(f"Filtered down to {final_route_count} unique direction routes.")
 
         if not train_station_routes_final:
-             status_message = f"Found {total_trains_found} trains for {station_code}"
+             status_message = f"Found {total_trains_found} trains for {searched_station}"
              if limit_applied: status_message += f" (processed {total_trains_to_process} due to limit)"
              status_message += f", fetched {fetched_route_count} routes, but no unique direction routes remained after filtering."
              return render_template('index.html', status_message=status_message, searched_station=searched_station)
 
         # Update status before map generation
-        status_message = f"Successfully fetched {fetched_route_count} routes for {station_code}"
+        status_message = f"Successfully fetched {fetched_route_count} routes for {searched_station}"
         if limit_applied: status_message += f" (processed {total_trains_to_process} due to limit)"
         status_message += f". Plotting {final_route_count} unique direction routes. Generating map..."
 
         # 3. Generate Map (using filtered routes)
         try:
             folium_map = generate_map(
-                station_code, station_coordinates, station_data_df, train_station_routes_final)
+                searched_station, station_coordinates, station_data_df, train_station_routes_final)
             map_html = folium_map._repr_html_()
 
             # Final status message
-            status_message = f"Map generated for {final_route_count} unique direction train routes passing through {station_code}."
+            status_message = f"Map generated for {final_route_count} unique direction train routes passing through {searched_station}."
             if limit_applied: status_message += f" (Processed {total_trains_to_process} out of {total_trains_found} found due to limit)."
             print("Map generation complete.")
 
@@ -343,55 +410,11 @@ def index():
             # Return template with error, keeping previous status context
             return render_template('index.html', error_message=error_message, status_message=status_message, searched_station=searched_station)
     else:
-        # If redirected after feedback, try to restore last station
-        last_station_code = session.get('last_station_code')
-        if last_station_code:
-            searched_station = last_station_code
-            # Re-run the same logic as if POSTed, but don't show status/error messages
-            train_numbers = get_trains_for_station(searched_station)
-            if train_numbers:
-                total_trains_found = len(train_numbers)
-                trains_to_process_list = train_numbers[:PLOT_LIMIT] if total_trains_found > PLOT_LIMIT else train_numbers
-                all_fetched_routes = {}
-                futures_map = {}
-                with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                    for train_num in trains_to_process_list:
-                        future = executor.submit(get_station_codes_for_train, train_num)
-                        futures_map[future] = train_num
-                    for future in concurrent.futures.as_completed(futures_map):
-                        try:
-                            returned_train_num, station_codes = future.result()
-                            if station_codes and len(station_codes) >= 2:
-                                all_fetched_routes[returned_train_num] = station_codes
-                        except Exception:
-                            pass
-                # Filter reverse duplicates (reuse your logic)
-                train_station_routes_final = {}
-                processed_pairs = set()
-                def sort_key(item):
-                    try: return int(item[0])
-                    except ValueError: return float('inf')
-                sorted_fetched_items = sorted(all_fetched_routes.items(), key=sort_key)
-                for train_num_a, route_a in sorted_fetched_items:
-                    if train_num_a in processed_pairs: continue
-                    start_a = route_a[0]
-                    end_a = route_a[-1]
-                    for train_num_b, route_b in all_fetched_routes.items():
-                        if train_num_a == train_num_b or train_num_b in processed_pairs or len(route_b) < 2: continue
-                        start_b = route_b[0]
-                        end_b = route_b[-1]
-                        if start_a == end_b and end_a == start_b:
-                            processed_pairs.add(train_num_b)
-                            break
-                    train_station_routes_final[train_num_a] = route_a
-                    processed_pairs.add(train_num_a)
-                if train_station_routes_final:
-                    folium_map = generate_map(
-                        searched_station, station_coordinates, station_data_df, train_station_routes_final)
-                    map_html = folium_map._repr_html_()
+        # No station searched yet, just render the page
+        pass
 
     # --- Render page ---
-    return render_template('index.html', map_html=map_html, status_message=status_message, error_message=error_message, searched_station=searched_station)
+    return render_template('index.html', map_html=map_html, status_message=status_message, error_message=error_message, searched_station=searched_station, train_table_data=train_table_data)
 
 @app.route('/submit_feedback', methods=['POST'])
 def submit_feedback():
