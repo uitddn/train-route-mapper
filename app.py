@@ -8,8 +8,9 @@ import time
 import sys
 import concurrent.futures
 import os
+from datetime import datetime
 
-from flask import Flask, render_template, request, flash
+from flask import Flask, render_template, request, flash, redirect, url_for, session
 
 # --- Flask App Initialization ---
 app = Flask(__name__)
@@ -202,14 +203,15 @@ def index():
     error_message = None
     searched_station = None
 
-    # Load coordinates (uses cache after first load)
     station_coordinates, station_data_df = load_station_coordinates(EXCEL_FILE_PATH)
     if station_coordinates is None:
         return render_template('index.html', error_message="FATAL ERROR: Could not load station coordinates file. Check server logs.")
 
+    # --- Remember last searched station in session ---
     if request.method == 'POST':
         station_code = request.form.get('station_code', '').strip().upper()
         searched_station = station_code
+        session['last_station_code'] = station_code
 
         if not station_code:
             error_message = "Please enter a station code."
@@ -340,9 +342,69 @@ def index():
             error_message = "An error occurred while generating the map (potentially too much data)."
             # Return template with error, keeping previous status context
             return render_template('index.html', error_message=error_message, status_message=status_message, searched_station=searched_station)
+    else:
+        # If redirected after feedback, try to restore last station
+        last_station_code = session.get('last_station_code')
+        if last_station_code:
+            searched_station = last_station_code
+            # Re-run the same logic as if POSTed, but don't show status/error messages
+            train_numbers = get_trains_for_station(searched_station)
+            if train_numbers:
+                total_trains_found = len(train_numbers)
+                trains_to_process_list = train_numbers[:PLOT_LIMIT] if total_trains_found > PLOT_LIMIT else train_numbers
+                all_fetched_routes = {}
+                futures_map = {}
+                with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                    for train_num in trains_to_process_list:
+                        future = executor.submit(get_station_codes_for_train, train_num)
+                        futures_map[future] = train_num
+                    for future in concurrent.futures.as_completed(futures_map):
+                        try:
+                            returned_train_num, station_codes = future.result()
+                            if station_codes and len(station_codes) >= 2:
+                                all_fetched_routes[returned_train_num] = station_codes
+                        except Exception:
+                            pass
+                # Filter reverse duplicates (reuse your logic)
+                train_station_routes_final = {}
+                processed_pairs = set()
+                def sort_key(item):
+                    try: return int(item[0])
+                    except ValueError: return float('inf')
+                sorted_fetched_items = sorted(all_fetched_routes.items(), key=sort_key)
+                for train_num_a, route_a in sorted_fetched_items:
+                    if train_num_a in processed_pairs: continue
+                    start_a = route_a[0]
+                    end_a = route_a[-1]
+                    for train_num_b, route_b in all_fetched_routes.items():
+                        if train_num_a == train_num_b or train_num_b in processed_pairs or len(route_b) < 2: continue
+                        start_b = route_b[0]
+                        end_b = route_b[-1]
+                        if start_a == end_b and end_a == start_b:
+                            processed_pairs.add(train_num_b)
+                            break
+                    train_station_routes_final[train_num_a] = route_a
+                    processed_pairs.add(train_num_a)
+                if train_station_routes_final:
+                    folium_map = generate_map(
+                        searched_station, station_coordinates, station_data_df, train_station_routes_final)
+                    map_html = folium_map._repr_html_()
 
     # --- Render page ---
     return render_template('index.html', map_html=map_html, status_message=status_message, error_message=error_message, searched_station=searched_station)
+
+@app.route('/submit_feedback', methods=['POST'])
+def submit_feedback():
+    feedback = request.form.get('feedback', '').strip()
+    if feedback:
+        feedback_file = os.path.join(BASE_DIR, 'feedback.txt')
+        with open(feedback_file, 'a', encoding='utf-8') as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {feedback}\n")
+        flash("Thank you for your feedback!", "success")
+    else:
+        flash("Feedback cannot be empty.", "error")
+    # Redirect to index, which will restore the last searched station and map
+    return redirect(url_for('index'))
 
 # --- Main execution (for Render/Gunicorn) ---
 # The Procfile `gunicorn app:app` will run this.

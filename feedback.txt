@@ -1,0 +1,2 @@
+[2025-05-25 01:16:22] KTPR, SMCP and VNE has wrong cordinates
+[2025-05-25 01:20:59] Bad cordinates
