@@ -196,6 +196,18 @@
             value="{{ request.form.station_code or '' }}"
             required
           />
+          <div>
+            <label>
+              <input type="radio" name="map_theme" value="CartoDB positron" {%
+              if not request.form.map_theme or request.form.map_theme ==
+              'CartoDB positron' %}checked{% endif %} /> Light Map
+            </label>
+            <label>
+              <input type="radio" name="map_theme" value="CartoDB dark_matter"
+              {% if request.form.map_theme == 'CartoDB dark_matter' %}checked{%
+              endif %} /> Dark Map
+            </label>
+          </div>
           <button type="submit">Generate Map</button>
         </form>
         <form action="{{ url_for('submit_feedback') }}" method="post">

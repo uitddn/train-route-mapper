@@ -205,11 +205,11 @@ def get_station_codes_for_train(train_number):
         print(f"Error parsing HTML for train {formatted_train_number}: {e}")
         return train_number, None, None
 
-def generate_map(station_code, station_coordinates, station_data_df, train_station_routes):
+def generate_map(station_code, station_coordinates, station_data_df, train_station_routes, theme='CartoDB positron'):
     """Generates the Folium map object using MarkerCluster."""
-    print(f"Generating map for {len(train_station_routes)} unique direction routes...")
+    print(f"Generating map for {len(train_station_routes)} unique direction routes with theme '{theme}'...")
     if not station_coordinates or station_data_df is None or station_data_df.empty:
-        map_center = [20.5937, 78.9629] # India center
+        map_center = [20.5937, 78.9629]  # India center
         zoom_level = 5
     else:
         target_coords = station_coordinates.get(station_code)
@@ -220,12 +220,12 @@ def generate_map(station_code, station_coordinates, station_data_df, train_stati
             map_center = [station_data_df['LAT'].mean(), station_data_df['LON'].mean()]
             zoom_level = 6
 
-    train_map = folium.Map(location=map_center, zoom_start=zoom_level, tiles='CartoDB positron')
+    train_map = folium.Map(location=map_center, zoom_start=zoom_level, tiles=theme)
 
     # Create a MarkerCluster layer
     marker_cluster = MarkerCluster(name="Train Stations").add_to(train_map)
 
-    added_station_markers = set() # Still useful to avoid duplicate marker objects
+    added_station_markers = set()  # Still useful to avoid duplicate marker objects
 
     for train_number, stations in train_station_routes.items():
         route_points = []
@@ -235,28 +235,22 @@ def generate_map(station_code, station_coordinates, station_data_df, train_stati
             coords = station_coordinates.get(stn_code)
             if coords:
                 route_points.append(coords)
-                # Add marker only once to the cluster
                 if stn_code not in added_station_markers:
                     folium.Marker(
                         location=coords,
                         popup=f"{stn_code}", tooltip=f"Station: {stn_code}",
-                        icon=folium.Icon(color='darkblue', icon='info-sign') # Simpler icon
-                    ).add_to(marker_cluster) # Add to cluster
+                        icon=folium.Icon(color='darkblue', icon='info-sign')
+                    ).add_to(marker_cluster)
                     added_station_markers.add(stn_code)
             else:
-                # Draw partial polyline if coordinates were missing for a segment
                 if len(route_points) > 1:
                     folium.PolyLine(route_points, color=color, weight=2, opacity=0.7,
                                     tooltip=f"Train: {train_number}").add_to(train_map)
-                route_points = [] # Reset segment
+                route_points = []
 
-        # Draw the complete or last segment of the polyline for this train
         if len(route_points) > 1:
             folium.PolyLine(route_points, color=color, weight=2, opacity=0.7,
                             tooltip=f"Train: {train_number}").add_to(train_map)
-
-    # Optional: Add Layer Control if needed later
-    # folium.LayerControl().add_to(train_map)
 
     return train_map
 
@@ -271,19 +265,28 @@ def index():
     error_message = None
     searched_station = None
     train_table_data = []
+    map_theme = 'CartoDB positron'  # Default theme
 
     station_coordinates, station_data_df = load_station_coordinates(EXCEL_FILE_PATH)
     if station_coordinates is None:
         return render_template('index.html', error_message="FATAL ERROR: Could not load station coordinates file. Check server logs.")
 
-    # --- If POST, use submitted station code ---
+    # --- If POST, use submitted station code and theme ---
     if request.method == 'POST':
         station_code = request.form.get('station_code', '').strip().upper()
+        map_theme = request.form.get('map_theme', 'CartoDB positron')
         searched_station = station_code
+
+        # Clear the cached map if the theme is changed
+        if map_theme != session.get('map_theme', 'CartoDB positron'):
+            clear_cache()
+
         session['last_station_code'] = station_code
+        session['map_theme'] = map_theme
     # --- If GET, but session has last station, use it ---
     elif session.get('last_station_code'):
         searched_station = session.get('last_station_code')
+        map_theme = session.get('map_theme', 'CartoDB positron')
 
     # Extract station name from station_data_df
     station_name = None
@@ -293,7 +296,7 @@ def index():
             station_name = station_row.iloc[0, 1]  # Assuming the second column contains the station name
 
     # Check if the map and train data are already cached
-    if searched_station == cached_station_code:
+    if searched_station == cached_station_code and map_theme == session.get('map_theme', 'CartoDB positron'):
         print(f"Using cached data for station: {searched_station}")
         map_html = cached_map
         train_table_data = cached_train_data
@@ -430,25 +433,19 @@ def index():
             # 3. Generate Map (using filtered routes)
             try:
                 folium_map = generate_map(
-                    searched_station, station_coordinates, station_data_df, train_station_routes_final)
+                    searched_station, station_coordinates, station_data_df, train_station_routes_final, theme=map_theme
+                )
                 map_html = folium_map._repr_html_()
-
-                # Final status message
-                station_display = f"{searched_station}: {station_name}" if station_name else searched_station
-                status_message = f"Map generated for {final_route_count} unique direction train routes passing through {station_display}."
-                if limit_applied:
-                    status_message += f" (Processed {total_trains_to_process} out of {total_trains_found} found due to limit)."
-                print("Map generation complete.")
 
                 # Cache the generated map and train data
                 cached_map = map_html
                 cached_train_data = train_table_data
                 cached_station_code = searched_station
+                session['map_theme'] = map_theme
 
             except Exception as e:
                 print(f"Error during map generation: {e}")
                 error_message = "An error occurred while generating the map (potentially too much data)."
-                # Return template with error, keeping previous status context
                 return render_template('index.html', error_message=error_message, status_message=status_message, searched_station=searched_station)
         else:
             # No station searched yet, just render the page
@@ -461,7 +458,7 @@ def index():
         status_message=status_message,
         error_message=error_message,
         searched_station=searched_station,
-        station_display=station_display,  # Add this line
+        station_display=station_display,
         train_table_data=train_table_data
     )
 
@@ -477,6 +474,21 @@ def submit_feedback():
         flash("Feedback cannot be empty.", "error")
     # Redirect to index, which will restore the last searched station and map
     return redirect(url_for('index'))
+
+@app.route('/switch_map_theme')
+def switch_map_theme():
+    theme = request.args.get('theme', 'light')
+    global cached_map, cached_train_data, cached_station_code
+
+    if cached_station_code and cached_map:
+        # Regenerate the map with the selected theme
+        station_coordinates, station_data_df = load_station_coordinates(EXCEL_FILE_PATH)
+        folium_map = generate_map(
+            cached_station_code, station_coordinates, station_data_df, cached_train_data, theme=theme
+        )
+        return folium_map._repr_html_()
+    else:
+        return "No map data available. Please search for a station first."
 
 # --- Main execution (for Render/Gunicorn) ---
 # The Procfile `gunicorn app:app` will run this.
