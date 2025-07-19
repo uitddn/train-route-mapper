@@ -5,166 +5,263 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Train Route Mapper</title>
     <style>
-      body {
-        font-family: sans-serif;
-        margin: 20px;
+      /* General Reset */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
       }
+
+      body {
+        font-family: "Arial", sans-serif;
+        background: #000; /* Set background to black */
+        color: #fff; /* Ensure text is white for readability */
+        padding: 20px;
+      }
+
+      h1 {
+        text-align: center;
+        margin-bottom: 20px;
+        font-size: 2.5em;
+        text-shadow: 2px 2px 4px rgba(255, 255, 255, 0.3); /* Subtle white shadow for contrast */
+      }
+
+      h2 {
+        text-align: center;
+        font-size: 1.2em;
+        font-weight: normal;
+        margin-bottom: 10px;
+        text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.3); /* Subtle white shadow for contrast */
+      }
+
+      p {
+        text-align: center;
+        margin-bottom: 20px;
+        font-size: 1.2em;
+        text-shadow: 1px 1px 3px rgba(255, 255, 255, 0.3); /* Subtle white shadow for contrast */
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: rgba(
+          182,
+          182,
+          182,
+          0.8
+        ); /* Slightly transparent black background */
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 4px 10px rgba(255, 255, 255, 0.2); /* Subtle white glow */
+      }
+
+      .form-container {
+        display: flex;
+        justify-content: space-between;
+        gap: 2em;
+        margin-bottom: 20px;
+      }
+
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex: 1;
+      }
+
       label {
-        display: block;
+        font-weight: bold;
         margin-bottom: 5px;
       }
+
       input[type="text"] {
-        padding: 8px;
-        margin-bottom: 10px;
-        width: 200px;
+        padding: 10px;
+        border: none;
+        border-radius: 5px;
+        width: 100%;
       }
+
       button {
         padding: 10px 15px;
+        background-color: #007bff;
+        color: #fff;
+        border: none;
+        border-radius: 5px;
         cursor: pointer;
+        font-size: 1em;
+        transition: background-color 0.3s ease;
       }
-      .map-container {
-        margin-top: 20px;
-        width: 54%;
-        height: 360px;
-        border: 1px solid #ccc;
+
+      button:hover {
+        background-color: #0056b3;
       }
-      .status {
-        margin-top: 15px;
-        font-style: italic;
-        color: #555;
-      }
+
+      .status,
       .error {
+        text-align: center;
         margin-top: 15px;
-        color: red;
+        font-size: 1.1em;
+      }
+
+      .status {
+        color: #00ffbb;
+      }
+
+      .error {
+        color: #dc3545;
         font-weight: bold;
       }
-      table {
-        border-collapse: collapse;
-        width: 100%;
+
+      .map-container {
         margin-top: 20px;
+        width: 100%;
+        height: 500px;
+        border: 1px solid #ccc;
+        border-radius: 10px;
+        overflow: hidden;
       }
-      th,
-      td {
-        border: 1px solid #ddd;
-        padding: 8px;
-        text-align: left;
-      }
-      th {
-        background-color: #f2f2f2;
-      }
+
       .scrollable-table-container {
-        max-height: 360px;
+        max-height: 400px;
         overflow-y: auto;
         border: 1px solid #ccc;
         background: #fff;
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-top: 10px;
+        color: #333;
+      }
+
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 10px;
+        text-align: left;
+      }
+
+      th {
+        background-color: #f2f2f2;
+        font-weight: bold;
+      }
+
+      ul {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0;
+        text-align: center;
+      }
+
+      ul li {
+        margin: 5px 0;
       }
     </style>
   </head>
   <body>
     <h1>Train Route Mapper</h1>
+    <h2
+      style="
+        text-align: center;
+        font-size: 1.2em;
+        font-weight: normal;
+        margin-bottom: 10px;
+      "
+    >
+      Visualise where can you go on interactive map.
+    </h2>
     <p>
       Enter a station code (e.g., NDLS, GAYA, BZA) to see the routes of trains
       passing through it.
     </p>
 
-    <div
-      style="
-        display: flex;
-        flex-direction: row;
-        gap: 29em; /* Increased gap */
-        align-items: flex-end;
-        margin-bottom: 1.5em;
-      "
-    >
-      <form method="POST" style="margin: 0">
-        <label for="station_code">Station Code:</label>
-        <input
-          type="text"
-          id="station_code"
-          name="station_code"
-          value="{{ request.form.station_code or '' }}"
-          required
-        />
-        <button type="submit">Generate Map</button>
-      </form>
-      <form
-        action="{{ url_for('submit_feedback') }}"
-        method="post"
-        style="margin: 0"
-      >
-        <label for="feedback">Your Feedback:</label>
-        <input
-          type="text"
-          id="feedback"
-          name="feedback"
-          required
-          style="width: 220px"
-        />
-        <button type="submit">Submit</button>
-      </form>
-    </div>
-
-    {% with messages = get_flashed_messages(with_categories=true) %} {% if
-    messages %}
-    <ul>
-      {% for category, message in messages %}
-      <li
-        style="color: {% if category == 'success' %}green{% else %}red{% endif %};"
-      >
-        {{ message }}
-      </li>
-      {% endfor %}
-    </ul>
-    {% endif %} {% endwith %} {% if status_message %}
-    <p class="status">{{ status_message }}</p>
-    {% endif %} {% if error_message %}
-    <p class="error">{{ error_message }}</p>
-    {% endif %} {% if map_html %}
-    <h2>Map for Station: {{ searched_station }}</h2>
-    <div style="display: flex; flex-direction: row; gap: 2em">
-      <div class="map-container" style="flex: 0 0 54%">{{ map_html|safe }}</div>
-      <div style="flex: 1">
-        {% if train_table_data %}
-        <h3>Trains Passing Through</h3>
-        <div class="scrollable-table-container">
-          <table
-            border="1"
-            cellpadding="6"
-            style="border-collapse: collapse; width: 100%"
-          >
-            <thead>
-              <tr>
-                <th>Sr. No.</th>
-                <th>Train Number</th>
-                <th>Train Name</th>
-                <th>Starting Station</th>
-                <th>Terminating Station</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for train in train_table_data %}
-              <tr>
-                <td>{{ loop.index }}</td>
-                <td>{{ train.number }}</td>
-                <td>{{ train.name }}</td>
-                <td>
-                  {{ train.start_code }} {% if train.start_name %}<br /><small
-                    >{{ train.start_name }}</small
-                  >{% endif %}
-                </td>
-                <td>
-                  {{ train.end_code }} {% if train.end_name %}<br /><small
-                    >{{ train.end_name }}</small
-                  >{% endif %}
-                </td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        {% endif %}
+    <div class="container">
+      <div class="form-container">
+        <form method="POST">
+          <label for="station_code">Station Code:</label>
+          <input
+            type="text"
+            id="station_code"
+            name="station_code"
+            value="{{ request.form.station_code or '' }}"
+            required
+          />
+          <button type="submit">Generate Map</button>
+        </form>
+        <form action="{{ url_for('submit_feedback') }}" method="post">
+          <label for="feedback">Your Feedback:</label>
+          <input
+            type="text"
+            id="feedback"
+            name="feedback"
+            required
+            placeholder="Enter your feedback here"
+          />
+          <button type="submit">Submit</button>
+        </form>
       </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %} {% if
+      messages %}
+      <ul>
+        {% for category, message in messages %}
+        <li
+          style="color: {% if category == 'success' %}#28a745{% else %}#dc3545{% endif %};"
+        >
+          {{ message }}
+        </li>
+        {% endfor %}
+      </ul>
+      {% endif %} {% endwith %} {% if status_message %}
+      <p class="status">{{ status_message }}</p>
+      {% endif %} {% if error_message %}
+      <p class="error">{{ error_message }}</p>
+      {% endif %} {% if map_html %}
+      <h2 style="text-align: center; margin-top: 20px">
+        Map for Station: {{ searched_station }}{% if searched_station_name %}
+        ({{ searched_station_name }}){% endif %}
+      </h2>
+      <div class="map-container">{{ map_html|safe }}</div>
+      {% if train_table_data %}
+      <h3 style="margin-top: 20px">
+        Trains Passing Through: { searched_station }
+      </h3>
+      <div class="scrollable-table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>Sr. No.</th>
+              <th>Train Number</th>
+              <th>Train Name</th>
+              <th>Starting Station</th>
+              <th>Terminating Station</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for train in train_table_data %}
+            <tr>
+              <td>{{ loop.index }}</td>
+              <td>{{ train.number }}</td>
+              <td>{{ train.name }}</td>
+              <td>
+                {{ train.start_code }} {% if train.start_name %}
+                <br /><small>{{ train.start_name }}</small>
+                {% endif %}
+              </td>
+              <td>
+                {{ train.end_code }} {% if train.end_name %}
+                <br /><small>{{ train.end_name }}</small>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %} {% endif %}
     </div>
-    {% endif %}
   </body>
 </html>
