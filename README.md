@@ -1,6 +1,10 @@
-Train Route Mapper
+**Train Route Mapper**
 
 Train Route Mapper is a Flask-based web application that allows users to visualize train routes on an interactive map. By entering a station code, users can see the routes of trains passing through that station, along with additional details such as train names, starting and terminating stations.
+
+
+[![image.png](https://i.postimg.cc/636GJdrv/image.png)](https://postimg.cc/XZhv9BDj)
+
 
 ## Features
 The main and most useful feature of this project the map visualisation of all train routes that pass through
