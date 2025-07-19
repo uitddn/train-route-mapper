@@ -455,7 +455,15 @@ def index():
             pass
 
     # --- Render page ---
-    return render_template('index.html', map_html=map_html, status_message=status_message, error_message=error_message, searched_station=searched_station, train_table_data=train_table_data)
+    return render_template(
+        'index.html',
+        map_html=map_html,
+        status_message=status_message,
+        error_message=error_message,
+        searched_station=searched_station,
+        station_display=station_display,  # Add this line
+        train_table_data=train_table_data
+    )
 
 @app.route('/submit_feedback', methods=['POST'])
 def submit_feedback():

@@ -227,7 +227,7 @@
       <div class="map-container">{{ map_html|safe }}</div>
       {% if train_table_data %}
       <h3 style="margin-top: 20px">
-        Trains Passing Through: { searched_station }
+        Trains Passing Through: {{ station_display }}
       </h3>
       <div class="scrollable-table-container">
         <table>
